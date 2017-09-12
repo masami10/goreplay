@@ -10,13 +10,15 @@ import (
 
 // HTTPModifierConfig holds configuration options for built-in traffic modifier
 type HTTPModifierConfig struct {
-	urlNegativeRegexp     HTTPUrlRegexp
-	urlRegexp             HTTPUrlRegexp
-	urlRewrite            UrlRewriteMap
-	headerFilters         HTTPHeaderFilters
-	headerNegativeFilters HTTPHeaderFilters
-	headerHashFilters     HTTPHashFilters
-	paramHashFilters      HTTPHashFilters
+	urlNegativeRegexp      HTTPUrlRegexp
+	urlRegexp              HTTPUrlRegexp
+	urlRewrite             UrlRewriteMap
+	headerRewrite          HeaderRewriteMap
+	headerFilters          HTTPHeaderFilters
+	headerNegativeFilters  HTTPHeaderFilters
+	headerBasicAuthFilters HTTPHeaderBasicAuthFilters
+	headerHashFilters      HTTPHashFilters
+	paramHashFilters       HTTPHashFilters
 
 	params  HTTPParams
 	headers HTTPHeaders
@@ -53,6 +55,32 @@ func (h *HTTPHeaderFilters) Set(value string) error {
 
 	return nil
 }
+
+//
+// Handling of --http-basic-auth-filter option
+//
+type basicAuthFilter struct {
+	regexp *regexp.Regexp
+}
+
+// HTTPHeaderFilters holds list of headers and their regexps
+type HTTPHeaderBasicAuthFilters []basicAuthFilter
+
+func (h *HTTPHeaderBasicAuthFilters) String() string {
+	return fmt.Sprint(*h)
+}
+
+func (h *HTTPHeaderBasicAuthFilters) Set(value string) error {
+	r, err := regexp.Compile(value)
+	if err != nil {
+		return err
+	}
+
+	*h = append(*h, basicAuthFilter{regexp: r})
+
+	return nil
+}
+
 
 //
 // Handling of --http-allow-header-hash and --http-allow-param-hash options
@@ -193,6 +221,42 @@ func (r *UrlRewriteMap) Set(value string) error {
 		return err
 	}
 	*r = append(*r, urlRewrite{src: regexp, target: []byte(valArr[1])})
+	return nil
+}
+
+//
+// Handling of --http-rewrite-header option
+//
+type headerRewrite struct {
+	header []byte
+	src    *regexp.Regexp
+	target []byte
+}
+
+type HeaderRewriteMap []headerRewrite
+
+func (r *HeaderRewriteMap) String() string {
+	return fmt.Sprint(*r)
+}
+
+func (r *HeaderRewriteMap) Set(value string) error {
+	headerArr := strings.SplitN(value, ":", 2)
+	if len(headerArr) < 2 {
+		return errors.New("need both header, regexp and rewrite target, colon-delimited (ex. Header: regexp,target)")
+	}
+
+	header := headerArr[0]
+	valArr := strings.SplitN(strings.TrimSpace(headerArr[1]), ",", 2)
+
+	if len(valArr) < 2 {
+		return errors.New("need both header, regexp and rewrite target, colon-delimited (ex. Header: regexp,target)")
+	}
+
+	regexp, err := regexp.Compile(valArr[0])
+	if err != nil {
+		return err
+	}
+	*r = append(*r, headerRewrite{header: []byte(header), src: regexp, target: []byte(valArr[1])})
 	return nil
 }
 

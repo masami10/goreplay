@@ -12,7 +12,7 @@ import (
 func TestRawListenerInput(t *testing.T) {
 	var req, resp *TCPMessage
 
-	listener := NewListener("", "0", EnginePcap, true, 10*time.Millisecond)
+	listener := NewListener("", "0", EnginePcap, true, 10*time.Millisecond, "")
 	defer listener.Close()
 
 	reqPacket := buildPacket(true, 1, 1, []byte("GET / HTTP/1.1\r\n\r\n"), time.Now())
@@ -46,10 +46,94 @@ func TestRawListenerInput(t *testing.T) {
 	}
 }
 
+func TestSingleAck100Continue(t *testing.T) {
+	listener := NewListener("", "0", EnginePcap, true, 10*time.Millisecond, "")
+	defer listener.Close()
+
+	reqPacket1 := buildPacket(
+		true,
+		1,
+		1,
+		[]byte("POST / HTTP/1.1\r\nExpect: 100-continue\r\nContent-Length: 4\r\n\r\n"), time.Now())
+
+	respPacket1 := buildPacket(false,
+		uint32(len(reqPacket1.Data)) + reqPacket1.Seq,
+		1,
+		[]byte(""), time.Now())
+
+	respPacket2 := buildPacket( false,
+		uint32(len(reqPacket1.Data)) + reqPacket1.Seq,
+		1,
+		[]byte("HTTP/1.1 100 Continue\r\n"), time.Now())
+
+	reqPacket3 := buildPacket(true,
+		uint32(len(reqPacket1.Data)) + respPacket1.Seq,
+		reqPacket1.Seq+uint32(len(reqPacket1.Data)),
+		[]byte("DATA"), time.Now())
+
+	respPacket3 := buildPacket(false,
+		uint32(len(reqPacket3.Data)) + reqPacket3.Seq,
+		respPacket1.Seq+uint32(len(respPacket1.Data)), []byte("HTTP/1.1 200 OK\r\n\r\n"), time.Now())
+
+	result := []byte("POST / HTTP/1.1\r\nContent-Length: 4\r\n\r\nDATA")
+
+	testRawListener100Continue(t, listener, result,
+		reqPacket1,
+		respPacket1, respPacket2,
+		reqPacket3,
+		respPacket3 )
+}
+
+
+func TestDoubleAck100Continue(t *testing.T) {
+	listener := NewListener("", "0", EnginePcap, true, 10*time.Millisecond, "")
+	defer listener.Close()
+
+	reqPacket1 := buildPacket(
+		true,
+		1,
+		1,
+		[]byte("POST / HTTP/1.1\r\nExpect: 100-continue\r\nContent-Length: 4\r\n\r\n"), time.Now())
+
+	respPacket1 := buildPacket(false,
+		uint32(len(reqPacket1.Data)) + reqPacket1.Seq,
+		1,
+		[]byte(""), time.Now())
+
+	respPacket2 := buildPacket( false,
+		uint32(len(reqPacket1.Data)) + reqPacket1.Seq,
+		1,
+		[]byte("HTTP/1.1 100 Continue\r\n"), time.Now())
+
+	reqPacket2 := buildPacket(true,
+		uint32(len(reqPacket1.Data)) + respPacket1.Seq,
+		reqPacket1.Seq+uint32(len(reqPacket1.Data)),
+		[]byte(""), time.Now())
+
+	reqPacket3 := buildPacket(true,
+		uint32(len(reqPacket1.Data)) + respPacket1.Seq,
+		reqPacket1.Seq+uint32(len(reqPacket1.Data)),
+		[]byte("DATA"), time.Now())
+
+	respPacket3 := buildPacket(false,
+		uint32(len(reqPacket3.Data)) + reqPacket3.Seq,
+		respPacket1.Seq+uint32(len(respPacket1.Data)),
+		[]byte("HTTP/1.1 200 OK\r\n\r\n"), time.Now())
+
+	result := []byte("POST / HTTP/1.1\r\nContent-Length: 4\r\n\r\nDATA")
+
+	testRawListener100Continue(t, listener, result,
+		reqPacket1,
+		respPacket1, respPacket2,
+		reqPacket2, reqPacket3,
+		respPacket3 )
+}
+
+
 func TestRawListenerInputResponseByClose(t *testing.T) {
 	var req, resp *TCPMessage
 
-	listener := NewListener("", "0", EnginePcap, true, 10*time.Millisecond)
+	listener := NewListener("", "0", EnginePcap, true, 10*time.Millisecond, "")
 	defer listener.Close()
 
 	reqPacket := buildPacket(true, 1, 1, []byte("GET / HTTP/1.1\r\n\r\n"), time.Now())
@@ -89,7 +173,7 @@ func TestRawListenerInputResponseByClose(t *testing.T) {
 func TestRawListenerInputWithoutResponse(t *testing.T) {
 	var req *TCPMessage
 
-	listener := NewListener("", "0", EnginePcap, false, 10*time.Millisecond)
+	listener := NewListener("", "0", EnginePcap, false, 10*time.Millisecond, "")
 	defer listener.Close()
 
 	reqPacket := buildPacket(true, 1, 1, []byte("GET / HTTP/1.1\r\n\r\n"), time.Now())
@@ -111,7 +195,7 @@ func TestRawListenerInputWithoutResponse(t *testing.T) {
 func TestRawListenerResponse(t *testing.T) {
 	var req, resp *TCPMessage
 
-	listener := NewListener("", "0", EnginePcap, true, 10*time.Millisecond)
+	listener := NewListener("", "0", EnginePcap, true, 10*time.Millisecond, "")
 	defer listener.Close()
 
 	reqPacket := buildPacket(true, 1, 1, []byte("GET / HTTP/1.1\r\n\r\n"), time.Now())
@@ -149,7 +233,7 @@ func TestRawListenerResponse(t *testing.T) {
 }
 
 func TestShort100Continue(t *testing.T) {
-	listener := NewListener("", "0", EnginePcap, true, 10*time.Millisecond)
+	listener := NewListener("", "0", EnginePcap, true, 10*time.Millisecond, "")
 	defer listener.Close()
 
 	reqPacket1 := buildPacket(true, 1, 1, []byte("POST / HTTP/1.1\r\nContent-Length: 2\r\nExpect: 100-continue\r\n\r\n"), time.Now())
@@ -169,7 +253,7 @@ func TestShort100Continue(t *testing.T) {
 
 // Response comes before Request
 func Test100ContinueWrongOrder(t *testing.T) {
-	listener := NewListener("", "0", EnginePcap, true, 10*time.Millisecond)
+	listener := NewListener("", "0", EnginePcap, true, 10*time.Millisecond, "")
 	defer listener.Close()
 
 	reqPacket1 := buildPacket(true, 1, 1, []byte("POST / HTTP/1.1\r\nContent-Length: 2\r\nExpect: 100-continue\r\n\r\n"), time.Now())
@@ -188,7 +272,7 @@ func Test100ContinueWrongOrder(t *testing.T) {
 }
 
 func TestAlt100ContinueHeaderOrder(t *testing.T) {
-	listener := NewListener("", "0", EnginePcap, true, 10*time.Millisecond)
+	listener := NewListener("", "0", EnginePcap, true, 10*time.Millisecond, "")
 	defer listener.Close()
 
 	reqPacket1 := buildPacket(true, 1, 1, []byte("POST / HTTP/1.1\r\nExpect: 100-continue\r\nContent-Length: 2\r\n\r\n"), time.Now())
@@ -349,7 +433,7 @@ func permutation(n int, list []*TCPPacket) []*TCPPacket {
 
 // Response comes before Request
 func TestRawListenerChunkedWrongOrder(t *testing.T) {
-	listener := NewListener("", "0", EnginePcap, true, 10*time.Millisecond)
+	listener := NewListener("", "0", EnginePcap, true, 10*time.Millisecond, "")
 	defer listener.Close()
 
 	reqPacket1 := buildPacket(true, 1, 1, []byte("POST / HTTP/1.1\r\nTransfer-Encoding: chunked\r\nExpect: 100-continue\r\n\r\n"), time.Now())
@@ -365,11 +449,6 @@ func TestRawListenerChunkedWrongOrder(t *testing.T) {
 
 	// Should re-construct message from all possible combinations
 	for i := 0; i < 6*5*4*3*2*1; i++ {
-
-		// if i < 54 || i > 57 {
-		// 	continue
-		// }
-
 		packets := permutation(i, []*TCPPacket{reqPacket1, reqPacket2, reqPacket3, reqPacket4, respPacket1, respPacket2})
 
 		t.Log("permutation:", i)
@@ -427,7 +506,7 @@ func getMessage() []*TCPPacket {
 
 // Response comes before Request
 func TestRawListenerBench(t *testing.T) {
-	l := NewListener("", "0", EnginePcap, true, 200*time.Millisecond)
+	l := NewListener("", "0", EnginePcap, true, 200*time.Millisecond, "")
 	defer l.Close()
 
 	// Should re-construct message from all possible combinations

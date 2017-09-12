@@ -106,15 +106,15 @@ func InitPlugins() {
 	}
 
 	for _, options := range Settings.inputRAW {
-		registerPlugin(NewRAWInput, options, engine, Settings.inputRAWTrackResponse, Settings.inputRAWExpire, Settings.inputRAWRealIPHeader)
+		registerPlugin(NewRAWInput, options, engine, Settings.inputRAWTrackResponse, Settings.inputRAWExpire, Settings.inputRAWRealIPHeader, Settings.inputRAWBpfFilter)
 	}
 
 	for _, options := range Settings.inputTCP {
-		registerPlugin(NewTCPInput, options)
+		registerPlugin(NewTCPInput, options, &Settings.inputTCPConfig)
 	}
 
 	for _, options := range Settings.outputTCP {
-		registerPlugin(NewTCPOutput, options)
+		registerPlugin(NewTCPOutput, options, &Settings.outputTCPConfig)
 	}
 
 	for _, options := range Settings.inputFile {

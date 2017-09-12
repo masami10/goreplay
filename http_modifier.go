@@ -2,7 +2,9 @@ package main
 
 import (
 	"bytes"
+	"strings"
 	"hash/fnv"
+	"encoding/base64"
 
 	"github.com/buger/goreplay/proto"
 )
@@ -16,8 +18,10 @@ func NewHTTPModifier(config *HTTPModifierConfig) *HTTPModifier {
 	if len(config.urlRegexp) == 0 &&
 		len(config.urlNegativeRegexp) == 0 &&
 		len(config.urlRewrite) == 0 &&
+		len(config.headerRewrite) == 0 &&
 		len(config.headerFilters) == 0 &&
 		len(config.headerNegativeFilters) == 0 &&
+		len(config.headerBasicAuthFilters) == 0 &&
 		len(config.headerHashFilters) == 0 &&
 		len(config.paramHashFilters) == 0 &&
 		len(config.params) == 0 &&
@@ -110,6 +114,23 @@ func (m *HTTPModifier) Rewrite(payload []byte) (response []byte) {
 		}
 	}
 
+	if len(m.config.headerBasicAuthFilters) > 0 {
+		for _, f := range m.config.headerBasicAuthFilters {
+			value := proto.Header(payload, []byte("Authorization"))
+
+			if len(value) > 0 {
+				valueString := string(value)
+				trimmedBasicAuthEncoded := strings.TrimPrefix(valueString, "Basic ")
+				if strings.Compare(valueString, trimmedBasicAuthEncoded) != 0 {
+					decodedAuth, _ := base64.StdEncoding.DecodeString(trimmedBasicAuthEncoded)
+					if !f.regexp.Match(decodedAuth) {
+						return
+					}
+				}
+			}
+		}
+	}
+
 	if len(m.config.headerHashFilters) > 0 {
 		for _, f := range m.config.headerHashFilters {
 			value := proto.Header(payload, f.name)
@@ -149,6 +170,20 @@ func (m *HTTPModifier) Rewrite(payload []byte) (response []byte) {
 				payload = proto.SetPath(payload, path)
 
 				break
+			}
+		}
+	}
+
+	if len(m.config.headerRewrite) > 0 {
+		for _, f := range m.config.headerRewrite {
+			value := proto.Header(payload, f.header)
+			if len(value) == 0 {
+				break
+			}
+
+			if f.src.Match(value) {
+				newValue := f.src.ReplaceAll(value, f.target)
+				payload = proto.SetHeader(payload, f.header, newValue)
 			}
 		}
 	}

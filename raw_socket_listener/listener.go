@@ -16,10 +16,6 @@ import (
 	"bytes"
 	"encoding/binary"
 	"fmt"
-	"github.com/buger/goreplay/proto"
-	"github.com/google/gopacket"
-	"github.com/google/gopacket/layers"
-	"github.com/google/gopacket/pcap"
 	"io"
 	"log"
 	"net"
@@ -29,6 +25,12 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/buger/goreplay/proto"
+
+	"github.com/google/gopacket"
+	"github.com/google/gopacket/layers"
+	"github.com/google/gopacket/pcap"
 )
 
 var _ = fmt.Println
@@ -70,6 +72,8 @@ type Listener struct {
 	trackResponse bool
 	messageExpire time.Duration
 
+	bpfFilter string
+
 	conn        net.PacketConn
 	pcapHandles []*pcap.Handle
 
@@ -91,7 +95,7 @@ const (
 )
 
 // NewListener creates and initializes new Listener object
-func NewListener(addr string, port string, engine int, trackResponse bool, expire time.Duration) (l *Listener) {
+func NewListener(addr string, port string, engine int, trackResponse bool, expire time.Duration, bpfFilter string) (l *Listener) {
 	l = &Listener{}
 
 	l.packetsChan = make(chan *packet, 10000)
@@ -105,6 +109,7 @@ func NewListener(addr string, port string, engine int, trackResponse bool, expir
 	l.respAliases = make(map[uint32]*TCPMessage)
 	l.respWithoutReq = make(map[uint32]tcpID)
 	l.trackResponse = trackResponse
+	l.bpfFilter = bpfFilter
 
 	l.addr = addr
 	_port, _ := strconv.Atoi(port)
@@ -303,9 +308,9 @@ func findPcapDevices(addr string) (interfaces []pcap.Interface, err error) {
 
 	if len(interfaces) == 0 {
 		return nil, &DeviceNotFoundError{addr}
-	} else {
-		return interfaces, nil
 	}
+
+	return interfaces, nil
 }
 
 func (t *Listener) readPcap() {
@@ -366,6 +371,10 @@ func (t *Listener) readPcap() {
 					bpf = "(tcp dst port " + strconv.Itoa(int(t.port)) + " and (" + bpfDstHost + ")) or (" + "tcp src port " + strconv.Itoa(int(t.port)) + " and (" + bpfSrcHost + "))"
 				} else {
 					bpf = "tcp dst port " + strconv.Itoa(int(t.port)) + " and (" + bpfDstHost + ")"
+				}
+
+				if t.bpfFilter != "" {
+					bpf = t.bpfFilter
 				}
 
 				if err := handle.SetBPFFilter(bpf); err != nil {
@@ -542,6 +551,13 @@ func (t *Listener) readPcapFile() {
 	if handle, err := pcap.OpenOffline(t.addr); err != nil {
 		log.Fatal(err)
 	} else {
+		if t.bpfFilter != "" {
+			if err := handle.SetBPFFilter(t.bpfFilter); err != nil {
+				log.Println("BPF filter error:", err)
+				return
+			}
+		}
+
 		t.readyCh <- true
 		packetSource := gopacket.NewPacketSource(handle, handle.LinkType())
 
@@ -560,12 +576,12 @@ func (t *Listener) readPcapFile() {
 				tcp, _ := tcpLayer.(*layers.TCP)
 				data = append(tcp.LayerContents(), tcp.LayerPayload()...)
 
-				if tcp.SrcPort >= 32768 && tcp.SrcPort <= 61000 {
-					copy(data[0:2], []byte{0, 0})
-					copy(data[2:4], []byte{0, 1})
+				if uint16(tcp.DstPort) == t.port {
+					copy(data[0:2], []byte{byte(tcp.SrcPort >> 8), byte(tcp.SrcPort)})
+					copy(data[2:4], []byte{byte(tcp.DstPort >> 8), byte(tcp.DstPort)})
 				} else {
-					copy(data[0:2], []byte{0, 1})
-					copy(data[2:4], []byte{0, 0})
+					copy(data[0:2], []byte{byte(tcp.DstPort >> 8), byte(tcp.DstPort)})
+					copy(data[2:4], []byte{byte(tcp.SrcPort >> 8), byte(tcp.SrcPort)})
 				}
 			} else {
 				continue
@@ -683,12 +699,18 @@ func (t *Listener) processTCPPacket(packet *TCPPacket) {
 
 	// Seek for 100-expect chunks
 	if parentAck, ok := t.seqWithData[packet.Seq]; ok {
+		// Skip zero-length chunks https://github.com/buger/goreplay/issues/496
+		if len(packet.Data) == 0 {
+			return
+		}
+
 		// In case if non-first data chunks comes first
 		for _, m := range t.messages {
 			if m.Ack == packet.Ack && bytes.Equal(m.packets[0].Addr, packet.Addr) {
 				t.deleteMessage(m)
 
 				if m.AssocMessage != nil {
+					m.AssocMessage.setAssocMessage(nil)
 					m.setAssocMessage(nil)
 				}
 
@@ -755,8 +777,9 @@ func (t *Listener) processTCPPacket(packet *TCPPacket) {
 				t.deleteMessage(m)
 				if m.AssocMessage != nil {
 					message.setAssocMessage(m.AssocMessage)
+					m.AssocMessage.setAssocMessage(nil)
 				}
-				// log.Println("2: Adding ack alias:", m.Ack, packet.Ack)
+
 				t.ackAliases[m.Ack] = packet.Ack
 
 				for _, pkt := range m.packets {
